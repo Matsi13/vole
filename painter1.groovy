@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <Servo.h>
+#define DEBUGSerial Serial
 
 int PressSensor = A0; //压力传感器从A0输入
 int LightSensor = 22; //光敏电阻从数字引脚22输入，0是亮
@@ -10,13 +11,16 @@ int FrontPWM = 2;     //前门由数字引脚2控制
 int CeilPWM = 3;      //顶门由数字引脚3控制
 int BuzzPWM = 4;      //蜂鸣器由数字引脚4控制
 
-int PressThreshold = 500;        //超过这一压力，视为有田鼠进入笼子
-int CameraTime = 3000;           //给摄像机3s拍照，之后熄灯
-int SprayTime = 3000;            //染色三秒钟
+int PressThreshold = 50;         //超过这一压力，视为有田鼠进入笼子
+int CameraTime = 5000;           //给摄像机3s拍照，之后熄灯
+int SprayInterval = 1000;        //两次喷雾的间隔,针对机械喷雾器
+int Spraycount = 2;              //喷雾器次数，针对机械喷雾器
+int SprayTime = 3000;            //喷雾时间，针对电子喷雾器  
 int FleeTime = 5000;             //给田鼠5s逃出笼子
 int FrontOpen = 0;               //开始时前门关闭
 int CeilOpen = 0;                //开始时顶门关闭
 const long Buzz_frequency = 300; //蜂鸣器频率
+
 
 Servo front_servo, ceil_servo;
 
@@ -26,46 +30,71 @@ void setup()
   pinMode(SpraySwitch, OUTPUT);
   pinMode(LEDSwitch, OUTPUT);
   pinMode(CeilSwitch, OUTPUT);
-  pinMode(BuzzPWM, PUTPUT);
+  pinMode(BuzzPWM, OUTPUT);
 
   digitalWrite(LEDSwitch, LOW);
   digitalWrite(CeilSwitch, LOW);
   digitalWrite(BuzzPWM, LOW);
+  digitalWrite(SpraySwitch, LOW);
 
   front_servo.attach(FrontPWM);
   ceil_servo.attach(CeilPWM);
+  digitalWrite(CeilSwitch, LOW);
+  DEBUGSerial.begin(9600);
+  
 }
 
 void loop()
 {
 
   int pressure = GetPressValue(PressSensor);
+  DEBUGSerial.print("F = ");
+  DEBUGSerial.print(pressure);
+  DEBUGSerial.println(" g,");
+
   int light = digitalRead(LightSensor);
+  DEBUGSerial.print("light:");
+  DEBUGSerial.println(light);
+  
   if (pressure > PressThreshold)
   {
+    DEBUGSerial.println("enter if");
+    
+    CeilOpen = 1;
     /*判断是否需要亮灯*/
     LED_CNTRL(light); //自动熄灭
+    if(light == 0)
+    {
+      delay(CameraTime);
+    }
+    
     /*摄像头拍照*/
 
     /*喷雾*/
-    Spray_CNTRL() ；
-        /*开前门*/
-        Front_CNTRL(1);
+    //Spraym_CNTRL();
+    //Spraye_CNTRL();
+    /*开前门*/
+    Front_CNTRL(1);   // order = 1 为开门
     delay(FleeTime);
+    
     /*压力持续存在，则打开蜂鸣器*/
+    DEBUGSerial.println("read presssure");
     pressure = GetPressValue(PressSensor);
+    DEBUGSerial.print("pressure: ");
+    DEBUGSerial.println(pressure);
+    
     while (pressure > PressThreshold)
     {
+      DEBUGSerial.println("turn on buzz");
       Buzz_CNTRL();
       pressure = GetPressValue(PressSensor);
     }
     /*关顶门，前门*/
-    Ceil_CNTRL(0);
+    Ceil_CNTRL();
     delay(10);
     Front_CNTRL(0);
     delay(1000);
-    digitalWrite(CeilSwitch, LOW);
-
+    
     /*向mega内存中写入捕捉记录*/
   }
 }
@@ -97,28 +126,44 @@ long GetPressValue(int pin)
   return PRESS_AO;
 }
 
-void LED_CNTRL(light, order)
+void LED_CNTRL(int light)
 {
   if (light)
   {
+    DEBUGSerial.println("turn on LED");
     digitalWrite(LEDSwitch, HIGH);
     delay(CameraTime);
     digitalWrite(LEDSwitch, LOW);
+    DEBUGSerial.println("turn off LED");
   }
   else
-  {
+  { 
+    DEBUGSerial.println("dont need to turn on LED");
     digitalWrite(LEDSwitch, LOW);
   }
 }
 
-void Spray_CNTRL()
+void Spraym_CNTRL()
 {
-  digitalWrite(SpraySwitch, HIGH);
-  delay(SprayTime);
-  digitalWrite(SpraySwitch, LOW);
+  int i = 0;
+  for(i = 0; i < Spraycount; i++)
+  {
+    digitalWrite(SpraySwitch, HIGH);
+    delay(SprayInterval);
+    digitalWrite(SpraySwitch, LOW);
+    delay(SprayInterval);
+  }
 }
 
-void Front_CNTRL(order)
+void Spraye_CNTRL()
+{
+    digitalWrite(SpraySwitch, HIGH);
+    delay(SprayTime);
+    digitalWrite(SpraySwitch, LOW);
+  }
+}
+
+void Front_CNTRL(int order)
 {
 
   int pos = 0;
@@ -128,6 +173,7 @@ void Front_CNTRL(order)
 
   if (FrontOpen == 0 && order == 1)
   {
+    DEBUGSerial.println("open front door");
     for (pos = beginpos; pos <= finalpos; pos += 1) // 两个for循环可能要交换位置，我忘了哪个是开门，哪个是关门
     {
       front_servo.write(pos);
@@ -137,6 +183,7 @@ void Front_CNTRL(order)
   }
   if (FrontOpen == 1 && order == 0)
   {
+    DEBUGSerial.println("close front door");
     for (pos = finalpos; pos >= beginpos; pos -= 1)
     {
       front_servo.write(pos);
@@ -146,9 +193,9 @@ void Front_CNTRL(order)
   }
 }
 
-void Ceil_CNTRL(order)
+void Ceil_CNTRL()
 {
-
+  DEBUGSerial.println("close ceil door");
   int pos = 0;
   int finalpos = 110;
   int beginpos = 0;
@@ -156,30 +203,30 @@ void Ceil_CNTRL(order)
 
   digitalWrite(CeilSwitch, HIGH);
   delay(10);
-
-  if (order == 1 && CeilOpen == 0)
+  
+  if (CeilOpen == 1)   // 若门开，则关门
   {
     for (pos = beginpos; pos <= finalpos; pos += 1)
     {
       ceil_servo.write(pos);
       delay(interval);
     }
-    CeilOpen = 1;
-  }
-  if (order == 0 && CeilOpen == 1)
-  {
-    for (pos = finalpos; pos >= beginpos; pos -= 1)
-    {
-      myservo.write(pos);
-      delay(interval);
-    }
     CeilOpen = 0;
   }
+  if (CeilOpen == 0)   // 若关门，舵机复位
+  {
+    for (pos = finalpos; pos >= beginpos; pos -= +1)
+    {
+      ceil_servo.write(pos);
+      delay(interval);
+    }
+  }
+  digitalWrite(CeilSwitch, LOW);
 }
 
 void Buzz_CNTRL()
 {
-  tone(BuzzPWM, frequency); // start making noise
+  tone(BuzzPWM, Buzz_frequency); // start making noise
   delay(1000);
   noTone(BuzzPWM); // stop making noise
   delay(1000);
