@@ -1,6 +1,10 @@
 #include <Arduino.h>
 #include <Servo.h>
+#include <EEPROM.h>
+#include <DS3231.h>
+
 #define DEBUGSerial Serial
+#define ClockLen 24              //DS3231返回的字符串长度
 
 int PressSensor = A0; //压力传感器从A0输入
 int LightSensor = 22; //光敏电阻从数字引脚22输入，0是亮
@@ -11,19 +15,27 @@ int FrontPWM = 2;     //前门由数字引脚2控制
 int CeilPWM = 3;      //顶门由数字引脚3控制
 int BuzzPWM = 4;      //蜂鸣器由数字引脚4控制
 
-int PressThreshold = 50;         //超过这一压力，视为有田鼠进入笼子
-int CameraTime = 5000;           //给摄像机3s拍照，之后熄灯
-int SprayInterval = 1000;        //两次喷雾的间隔,针对机械喷雾器
-int Spraycount = 2;              //喷雾器次数，针对机械喷雾器
-int SprayTime = 3000;            //喷雾时间，针对电子喷雾器  
-int FleeTime = 5000;             //给田鼠5s逃出笼子
+const int PressThreshold = 50;         //超过这一压力，视为有田鼠进入笼子
+const int CameraTime = 5000;           //给摄像机3s拍照，之后熄灯
+const int SprayInterval = 1000;        //两次喷雾的间隔,针对机械喷雾器
+const int Spraycount = 2;              //喷雾器次数，针对机械喷雾器
+const int SprayTime = 3000;            //喷雾时间，针对电子喷雾器  
+const int FleeTime = 5000;             //给田鼠5s逃出笼子
+const long Buzz_frequency = 300; //蜂鸣器频率
+
 int FrontOpen = 0;               //开始时前门关闭
 int CeilOpen = 0;                //开始时顶门关闭
-const long Buzz_frequency = 300; //蜂鸣器频率
+int VoleCount = 0;               //记录抓到的田鼠的数量
+int WriteAddress = 0;            //EEPROM的起始地址
 
 
 Servo front_servo, ceil_servo;
+DS3231 rtc(SDA, SCL);
 
+struct Record{
+  int count;
+  char time[ClockLen];
+};
 void setup()
 {
   pinMode(LightSensor, INPUT_PULLUP);
@@ -35,13 +47,14 @@ void setup()
   digitalWrite(LEDSwitch, LOW);
   digitalWrite(CeilSwitch, LOW);
   digitalWrite(BuzzPWM, LOW);
-  digitalWrite(SpraySwitch, LOW);
 
   front_servo.attach(FrontPWM);
   ceil_servo.attach(CeilPWM);
   digitalWrite(CeilSwitch, LOW);
   DEBUGSerial.begin(9600);
-  
+
+  rtc.begin();
+  EEClear();                     // 打印并清理上一次的记录
 }
 
 void loop()
@@ -58,6 +71,7 @@ void loop()
   
   if (pressure > PressThreshold)
   {
+    Records();
     DEBUGSerial.println("enter if");
     
     CeilOpen = 1;
@@ -71,8 +85,7 @@ void loop()
     /*摄像头拍照*/
 
     /*喷雾*/
-    //Spraym_CNTRL();
-    //Spraye_CNTRL();
+    //Spray_CNTRL();
     /*开前门*/
     Front_CNTRL(1);   // order = 1 为开门
     delay(FleeTime);
@@ -143,24 +156,11 @@ void LED_CNTRL(int light)
   }
 }
 
-void Spraym_CNTRL()
+void Spray_CNTRL()
 {
-  int i = 0;
-  for(i = 0; i < Spraycount; i++)
-  {
-    digitalWrite(SpraySwitch, HIGH);
-    delay(SprayInterval);
-    digitalWrite(SpraySwitch, LOW);
-    delay(SprayInterval);
-  }
-}
-
-void Spraye_CNTRL()
-{
-    digitalWrite(SpraySwitch, HIGH);
-    delay(SprayTime);
-    digitalWrite(SpraySwitch, LOW);
-  }
+  digitalWrite(SpraySwitch, HIGH);
+  delay(SprayTime);
+  digitalWrite(SpraySwitch, LOW);
 }
 
 void Front_CNTRL(int order)
@@ -231,3 +231,37 @@ void Buzz_CNTRL()
   noTone(BuzzPWM); // stop making noise
   delay(1000);
 }
+void Records()
+{
+  VoleCount += 1;
+  String date = rtc.getDateStr();
+  String time = rtc.getTimeStr();
+  String datetime= date + time;
+  Record r = {VoleCount, datetime.c_str()};
+  EEPROM.put(WriteAddress, r);
+  WriteAddress += sizeof(Record);
+  if (WriteAddress >= EEPROM.length())
+  WriteAddress -= EEPROM.length();
+}
+
+void EEClear()
+{
+  int ReadAddress = 0;
+  Record prerecord;
+  EEPROM.get(ReadAddress, prerecord);
+  while (prerecord.count > 0 && ReadAddress <= EEPROM.length())
+  {
+    ReadAddress += sizeof(Record);
+    DEBUGSerial.println(prerecord.count);
+    DEBUGSerial.println(prerecord.time);
+    EEPROM.get(ReadAddress, prerecord);
+  }
+  
+ for (int i = 0 ; i < EEPROM.length() ; i++) 
+ {
+    EEPROM.write(i, 0);
+  }
+}
+
+
+
