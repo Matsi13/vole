@@ -1,19 +1,23 @@
 #include <Arduino.h>
 #include <Servo.h>
 #include <EEPROM.h>
-#include <DS3231.h>
+#include <DS1302.h>
 
 #define DEBUGSerial Serial
-#define ClockLen 24              //DS3231返回的字符串长度
+#define ClockLen 24                    //DS1302返回的字符串长度
 
-int PressSensor = A0; //压力传感器从A0输入
-int LightSensor = 22; //光敏电阻从数字引脚22输入，0是亮
-int LEDSwitch = 23;   //LED由数字引脚23控制
-int SpraySwitch = 24; //喷雾器由数字24控制
-int CeilSwitch = 25;  //用一个继电器，给顶门舵机断电
-int FrontPWM = 2;     //前门由数字引脚2控制
-int CeilPWM = 3;      //顶门由数字引脚3控制
-int BuzzPWM = 4;      //蜂鸣器由数字引脚4控制
+const int PressSensor = A0;            //压力传感器从A0输入
+const int LightSensor = 22;            //光敏电阻从数字引脚22输入，0是亮
+const int LEDSwitch = 23;              //LED由数字引脚23控制
+const int SpraySwitch = 24;            //喷雾器由数字24控制
+const int CeilSwitch = 25;             //用一个继电器，给顶门舵机断电
+const int FrontPWM = 5;                //前门由数字引脚2控制
+const int CeilPWM = 6;                 //顶门由数字引脚3控制
+const int BuzzPWM = 7;                 //蜂鸣器由数字引脚4控制
+const int DSRST = 2;                   //时钟控制
+const int DSDAT = 3;                   //时钟控制
+const int DSCLK = 4;                   //时钟控制
+
 
 const int PressThreshold = 50;         //超过这一压力，视为有田鼠进入笼子
 const int CameraTime = 5000;           //给摄像机3s拍照，之后熄灯
@@ -21,21 +25,21 @@ const int SprayInterval = 1000;        //两次喷雾的间隔,针对机械喷�
 const int Spraycount = 2;              //喷雾器次数，针对机械喷雾器
 const int SprayTime = 3000;            //喷雾时间，针对电子喷雾器  
 const int FleeTime = 5000;             //给田鼠5s逃出笼子
-const long Buzz_frequency = 300; //蜂鸣器频率
+const long Buzz_frequency = 300;       //蜂鸣器频率
 
-int FrontOpen = 0;               //开始时前门关闭
-int CeilOpen = 0;                //开始时顶门关闭
-int VoleCount = 0;               //记录抓到的田鼠的数量
-int WriteAddress = 0;            //EEPROM的起始地址
-
-
-Servo front_servo, ceil_servo;
-DS3231 rtc(SDA, SCL);
+int FrontOpen = 0;                     //开始时前门关闭
+int CeilOpen = 0;                      //开始时顶门关闭
+int VoleCount = 0;                     //记录抓到的田鼠的数量
+int WriteAddress = 0;                  //EEPROM的起始地址
 
 struct Record{
   int count;
   char time[ClockLen];
 };
+
+Servo front_servo, ceil_servo;
+DS1302 rtc(DSRST, DSDAT, DSCLK);       //对应DS1302的RST,DAT,CLK
+
 void setup()
 {
   pinMode(LightSensor, INPUT_PULLUP);
@@ -53,7 +57,6 @@ void setup()
   digitalWrite(CeilSwitch, LOW);
   DEBUGSerial.begin(9600);
 
-  rtc.begin();
   EEClear();                     // 打印并清理上一次的记录
 }
 
@@ -71,8 +74,11 @@ void loop()
   
   if (pressure > PressThreshold)
   {
-    Records();
+    
     DEBUGSerial.println("enter if");
+
+    /*记录一次捕捉，写入mega内存*/
+    Records();
     
     CeilOpen = 1;
     /*判断是否需要亮灯*/
@@ -85,7 +91,7 @@ void loop()
     /*摄像头拍照*/
 
     /*喷雾*/
-    //Spray_CNTRL();
+    Spray_CNTRL();
     /*开前门*/
     Front_CNTRL(1);   // order = 1 为开门
     delay(FleeTime);
@@ -233,11 +239,15 @@ void Buzz_CNTRL()
 }
 void Records()
 {
+  DEBUGSerial.println("In Records");
   VoleCount += 1;
-  String date = rtc.getDateStr();
-  String time = rtc.getTimeStr();
-  String datetime= date + time;
-  Record r = {VoleCount, datetime.c_str()};
+  Time tim = rtc.time(); //从DS1302获取时间数据
+  Record r;
+  snprintf(r.time, sizeof(r.time), "%04d-%02d-%02d %02d:%02d:%02d",
+           tim.yr, tim.mon, tim.date,
+           tim.hr, tim.min, tim.sec); 
+  r.count = VoleCount;
+  
   EEPROM.put(WriteAddress, r);
   WriteAddress += sizeof(Record);
   if (WriteAddress >= EEPROM.length())
